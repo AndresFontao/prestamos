@@ -1,6 +1,7 @@
 /* ================================================================
    Préstamos — gestión de créditos
    ================================================================ */
+const VERSION = '3';
 let DB = null;   // se carga desde OneDrive
 const $ = (s, r) => (r || document).querySelector(s);
 const el = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstElementChild; };
@@ -1312,9 +1313,11 @@ function vConexion() {
       <dt>Archivo</dt><dd style="font-weight:400;font-size:12.5px">${esc(CFG.ruta)}</dd>
       <dt>Datos</dt><dd>${DB ? DB.prestamos.length + ' préstamos · ' + DB.personas.length + ' personas' : '—'}</dd>
       <dt>Última escritura</dt><dd style="font-weight:400;font-size:12.5px">${DB && DB.actualizado ? new Date(DB.actualizado).toLocaleString('es-AR') : '—'}</dd>
+      <dt>Versión de la app</dt><dd>${VERSION}</dd>
     </dl>
     <div class="f" style="margin:16px 0 0">
       <button class="btn" id="krec">Volver a cargar</button>
+      <button class="btn" id="kupd">Buscar actualización</button>
       ${conectado ? '<button class="btn" id="kout">Desconectar</button>' : ''}
     </div></div>
 
@@ -1335,6 +1338,14 @@ function vConexion() {
 }
 function pintarConexion() {
   on('#krec', 'click', () => location.reload());
+  on('#kupd', 'click', async () => {
+    aviso('Buscando…');
+    try {
+      if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
+      if (navigator.serviceWorker) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+    } catch (e) { }
+    location.reload(true);
+  });
   on('#kout', 'click', desconectar);
   on('#kguardar', 'click', () => {
     CFG.clientId = $('#kid').value.trim();

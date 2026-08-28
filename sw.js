@@ -1,7 +1,7 @@
 /* Cachea sólo el "armazón" de la app (código e imágenes) para que abra sin conexión.
    Los datos siempre se piden a OneDrive: nunca se guarda una copia acá. */
-const CACHE = 'prestamos-v2';
-const ARCHIVOS = ['./', './index.html', './app.js', './nube.js', './xlsx.js',
+const CACHE = 'prestamos-v3';
+const ARCHIVOS = ['./', './index.html', './app.js?v=3', './nube.js?v=3', './xlsx.js?v=3',
   './logo.jpg', './logo2.jpg', './pagare.jpg', './icon-192.png', './icon-512.png', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {
@@ -15,8 +15,9 @@ self.addEventListener('fetch', e => {
   const u = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
   if (u.origin !== location.origin) return;               // Graph y login siempre a la red
+  const esHTML = e.request.mode === 'navigate' || u.pathname.endsWith('/') || u.pathname.endsWith('.html');
   e.respondWith(
-    fetch(e.request).then(r => {
+    fetch(esHTML ? new Request(e.request.url, { cache: 'reload' }) : e.request).then(r => {
       const copia = r.clone();
       caches.open(CACHE).then(c => c.put(e.request, copia));
       return r;
