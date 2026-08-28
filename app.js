@@ -1,5 +1,5 @@
 /* ================================================================
-   Préstamos — prototipo navegable
+   Préstamos — gestión de créditos
    ================================================================ */
 let DB = null;   // se carga desde OneDrive
 const $ = (s, r) => (r || document).querySelector(s);
@@ -71,6 +71,36 @@ function cuotasPagadas(p, ref) {
   return Math.min(k, p.ncuot);
 }
 function saldo(p, ref) { return (p.ncuot - cuotasPagadas(p, ref)) * p.cuota; }
+
+/* Retiros: el interés de cada cuota se reparte en Administración, Empresa e Inversión.
+   El retiro de un mes es la suma de esas partes de las cuotas imputadas a ese mes,
+   y se cobra el 20 del mes siguiente. */
+function retiros() {
+  const m = new Map();
+  DB.prestamos.forEach(p => cuotasDe(p).forEach(c => {
+    const o = m.get(c.mes) || { mes: c.mes, adm: 0, emp: 0, inv: 0 };
+    o.adm += p.adm || 0; o.emp += p.emp || 0; o.inv += p.inv || 0;
+    m.set(c.mes, o);
+  }));
+  /* Para los meses ya cobrados manda lo efectivamente retirado, que quedó registrado
+     en el libro histórico. De hoy en adelante, la proyección calculada. */
+  const hoy = iso(HOY);
+  const real = new Map((DB.retiros || []).map(r => [r.fecha, r]));
+  const salida = [];
+  [...m.values()].sort((a, b) => a.mes.localeCompare(b.mes)).forEach(o => {
+    const fecha = addM(o.mes, 1) + '-20';
+    const h = real.get(fecha);
+    const usarReal = fecha <= hoy && h && (h.adm || h.emp || h.inv);
+    const dif = usarReal && (Math.abs(h.adm - o.adm) > 1 || Math.abs(h.emp - o.emp) > 1 || Math.abs(h.inv - o.inv) > 1);
+    salida.push({
+      mes: o.mes, fecha,
+      adm: usarReal ? h.adm : o.adm, emp: usarReal ? h.emp : o.emp, inv: usarReal ? h.inv : o.inv,
+      real: !!usarReal, proyectado: fecha > hoy,
+      calc: dif ? o : null
+    });
+  });
+  return salida;
+}
 
 /* flujo: mes -> importe total a cobrar */
 function flujoPorMes(lista) {
@@ -264,6 +294,7 @@ function vInicio() {
 
 /* ------------------------- préstamos ------------------------- */
 let fPrest = { q: '', estado: '', empresa: '', anio: '' };
+let selPrest = new Set(), soloSel = false;
 function vPrestamos() {
   const anios = [...new Set(DB.prestamos.map(p => p.entregado.slice(0, 4)))].sort().reverse();
   return `
@@ -274,6 +305,8 @@ function vPrestamos() {
     <select id="estado"><option value="">Todos</option><option value="a">Activos</option><option value="p">Pagados</option></select>
     <select id="empresa"><option value="">Toda empresa</option>${DB.empresas.map(e => `<option>${esc(e)}</option>`).join('')}</select>
     <select id="anio"><option value="">Todo año</option>${anios.map(a => `<option>${a}</option>`).join('')}</select>
+    <button class="btn" id="copiar">Copiar tabla</button>
+    <span class="hint" id="pmsg" style="margin:0"></span>
   </div>
   <div id="lista"></div>`;
 }
@@ -286,25 +319,74 @@ function filtrar() {
     if (fPrest.empresa && pe.empresa !== fPrest.empresa) return false;
     if (fPrest.anio && !p.entregado.startsWith(fPrest.anio)) return false;
     if (q && !((pe.nombre || '').toLowerCase().includes(q) || String(p.oc).includes(q) || (pe.cuil || '').includes(q))) return false;
+    if (soloSel && !selPrest.has(p.id)) return false;
     return true;
   }).reverse();
 }
 function pintarLista() {
   const r = filtrar();
   const tot = r.reduce((a, p) => a + p.capital, 0);
+  const vis = r.slice(0, 400);
+  const todosMarcados = vis.length && vis.every(p => selPrest.has(p.id));
   $('#lista').innerHTML = `
-    <p style="color:var(--muted);font-size:13px;margin:0 0 9px">${r.length} préstamos · ${$$(tot)} de capital</p>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 9px">
+      <span style="color:var(--muted);font-size:13px">${r.length} préstamos · ${$$(tot)} de capital</span>
+      ${selPrest.size ? `<span class="pill act">${selPrest.size} seleccionado${selPrest.size > 1 ? 's' : ''}</span>
+        <button class="btn" id="verSel" style="padding:4px 10px;font-size:12.5px">${soloSel ? 'Ver todos' : 'Ver sólo estos'}</button>
+        <button class="btn" id="limpiarSel" style="padding:4px 10px;font-size:12.5px">Limpiar</button>` : ''}
+    </div>
     <div class="card"><div class="tw"><table>
-      <thead><tr><th>N°</th><th>Persona</th><th>Empresa</th><th class="num">Capital</th><th class="num">Cuotas</th>
+      <thead><tr><th style="width:34px"><input type="checkbox" id="chkAll" ${todosMarcados ? 'checked' : ''}></th>
+        <th>N°</th><th>Persona</th><th>Empresa</th><th class="num">Capital</th><th class="num">Cuotas</th>
         <th class="num">Cuota</th><th>Entrega</th><th>Últ. cuota</th><th>Estado</th></tr></thead>
-      <tbody>${r.slice(0, 400).map(p => { const pe = persona(p.pid), a = activo(p);
-        return `<tr class="click" data-go="#/prestamo/${p.id}">
+      <tbody>${vis.map(p => { const pe = persona(p.pid), a = activo(p), m = selPrest.has(p.id);
+        return `<tr class="click" data-go="#/prestamo/${p.id}"${m ? ' style="background:var(--accent-soft)"' : ''}>
+          <td><input type="checkbox" class="chk" data-id="${p.id}" ${m ? 'checked' : ''}></td>
           <td>${esc(p.oc)}</td><td>${esc(pe.nombre)}</td><td style="color:var(--ink-2)">${esc(pe.empresa || '—')}</td>
           <td class="num">${$$(p.capital)}</td><td class="num">${p.ncuot}</td><td class="num">${$$(p.cuota)}</td>
           <td>${fDate(p.entregado)}</td><td>${fDate(p.ultCuota)}</td>
           <td><span class="pill dot ${a ? 'act' : 'pag'}">${a ? 'Activo' : 'Pagado'}</span></td></tr>`; }).join('')}
       </tbody></table></div></div>
-    ${r.length > 400 ? '<p class="hint">Mostrando los primeros 400. Afiná la búsqueda.</p>' : ''}`;
+    ${r.length > 400 ? '<p class="hint">Mostrando los primeros 400 en pantalla. El botón Copiar usa los ' + r.length + ' filtrados.</p>' : ''}`;
+
+  $('#lista').querySelectorAll('.chk').forEach(c => c.addEventListener('change', e => {
+    const id = +e.target.dataset.id;
+    e.target.checked ? selPrest.add(id) : selPrest.delete(id);
+    if (soloSel && !selPrest.size) soloSel = false;
+    pintarLista();
+  }));
+  on('#chkAll', 'change', e => {
+    vis.forEach(p => e.target.checked ? selPrest.add(p.id) : selPrest.delete(p.id));
+    if (soloSel && !selPrest.size) soloSel = false;
+    pintarLista();
+  });
+  on('#verSel', 'click', () => { soloSel = !soloSel; pintarLista(); });
+  on('#limpiarSel', 'click', () => { selPrest.clear(); soloSel = false; pintarLista(); });
+}
+
+/* copia los préstamos filtrados como tabla, lista para pegar en un mail o una planilla */
+async function copiarPrestamos() {
+  const r = filtrar();
+  if (!r.length) { aviso('No hay préstamos para copiar', true); return; }
+  const cab = ['N°', 'PERSONA', 'CAPITAL', 'CUIL', 'TELEFONO', 'EMPRESA'];
+  const filas = r.map(p => { const x = persona(p.pid);
+    return [String(p.oc), x.nombre || '', nf0.format(p.capital), x.cuil || '', x.telefono || '', x.empresa || '']; });
+  const bd = '1px solid #d0d0d0';
+  const html = `<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;font-size:11pt">
+    <tr>${cab.map((c, i) => `<th style="border:${bd};background:#f2f2f2;padding:4px 9px;text-align:${i === 2 ? 'right' : 'left'}">${c}</th>`).join('')}</tr>
+    ${filas.map(f => `<tr>${f.map((c, j) => `<td style="border:${bd};padding:4px 9px;text-align:${j === 2 ? 'right' : 'left'}">${esc(c)}</td>`).join('')}</tr>`).join('')}</table>`;
+  const texto = [cab.join('\t'), ...filas.map(f => f.join('\t'))].join('\n');
+  const msg = (t) => { const n = $('#pmsg'); if (n) { n.textContent = t; setTimeout(() => { if (n) n.textContent = ''; }, 3500); } };
+  try {
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([texto], { type: 'text/plain' })
+    })]);
+    msg(r.length + ' préstamos copiados ✓  pegalos con Ctrl+V');
+  } catch (e) {
+    try { await navigator.clipboard.writeText(texto); msg('Copiados como texto ✓'); }
+    catch (e2) { msg('No se pudo copiar'); }
+  }
 }
 
 function vPrestamo(id) {
@@ -316,8 +398,9 @@ function vPrestamo(id) {
   <div class="head"><div>
     <h1>Préstamo N° ${esc(p.oc)}</h1>
     <p>${esc(pe.nombre)} · ${esc(pe.empresa || 'sin empresa')} · <span class="pill dot ${a ? 'act' : 'pag'}">${a ? 'Activo' : 'Pagado'}</span></p></div>
-    <div style="display:flex;gap:8px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
       <a class="btn" href="#/persona/${pe.id}">Ver persona</a>
+      <a class="btn" href="#/editar/${p.id}">Corregir</a>
       <a class="btn pri" href="#/doc/${p.id}">Documentos</a></div></div>
 
   <div class="two">
@@ -517,12 +600,16 @@ function vPersona(id) {
     <p>${esc(x.empresa || 'sin empresa')} · ${ps.length} préstamos · ${$$(cap)} prestado en total</p></div></div>
   <div class="two">
     <div class="card pad"><h3 style="margin-bottom:11px">Datos</h3>
-      <div class="fg"><label class="fl">CUIL</label><input type="text" value="${esc(x.cuil || '')}" placeholder="sin cargar"></div>
-      <div class="fg"><label class="fl">DNI</label><input type="text" value="${esc(x.dni || '')}" placeholder="sin cargar"></div>
-      <div class="fg"><label class="fl">Teléfono</label><input type="text" value="${esc(x.telefono || '')}" placeholder="sin cargar"></div>
-      <div class="fg"><label class="fl">Empresa</label><select>${['', ...DB.empresas].map(e => `<option ${e === x.empresa ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></div>
-      <div class="fg"><label class="fl">Provincia</label><input type="text" value="${esc(x.provincia || '')}" placeholder="sin cargar"></div>
-      <button class="btn" disabled>Guardar (no disponible en el prototipo)</button>
+      <div class="fg"><label class="fl">Apellido y nombre</label><input type="text" id="ed-nombre" value="${esc(x.nombre)}"></div>
+      <div class="fg"><label class="fl">CUIL</label><input type="text" id="ed-cuil" value="${esc(x.cuil || '')}" placeholder="sin cargar"></div>
+      <div class="fg"><label class="fl">DNI</label><input type="text" id="ed-dni" value="${esc(x.dni || '')}" placeholder="sin cargar"></div>
+      <div class="fg"><label class="fl">Teléfono</label><input type="text" id="ed-tel" value="${esc(x.telefono || '')}" placeholder="sin cargar"></div>
+      <div class="fg"><label class="fl">Empresa</label>
+        <select id="ed-emp"><option value="">— Sin asignar —</option>${DB.empresas.map(e => `<option ${e === x.empresa ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></div>
+      <div class="fg"><label class="fl">Provincia</label><input type="text" id="ed-prov" value="${esc(x.provincia || '')}" placeholder="sin cargar"></div>
+      <div class="fg"><label class="fl">Estado</label>
+        <select id="ed-st"><option ${x.status !== 'BAJA' ? 'selected' : ''}>Activo</option><option ${x.status === 'BAJA' ? 'selected' : ''}>BAJA</option></select></div>
+      <button class="btn pri" id="ed-go">Guardar cambios</button>
     </div>
     <div><div class="card pad"><h3 style="margin-bottom:11px">Resumen</h3><dl class="dl">
       <dt>Préstamos</dt><dd>${ps.length}</dd>
@@ -579,9 +666,9 @@ function capitalPorMes() {
 }
 
 let mesAnalisis = MES_HOY;
-const conRetiro = (r) => (r.adm || 0) + (r.emp || 0) + (r.inv || 0) !== 0;
 function vAnalisis() {
-  const rs = DB.retiros.filter(conRetiro);
+  const rs = retiros();
+  const iProy = rs.findIndex(r => r.mes >= MES_HOY);
   const cpm = capitalPorMes();
   const ultAnio = cpm[cpm.length - 1], prevAnio = cpm[cpm.length - 2];
   const mesActual = +MES_HOY.slice(5) - 1, anioActual = String(HOY.getFullYear());
@@ -606,12 +693,17 @@ function vAnalisis() {
   <div class="sec"><h2>Retiros</h2>
     <div class="card"><div class="tw" id="twret" style="max-height:none"><table>
       <thead><tr><th style="left:0;position:sticky;z-index:2;background:var(--surface)">RETIROS</th>
-        ${rs.map(r => `<th class="num">${fDate(r.fecha)}</th>`).join('')}</tr></thead>
+        ${rs.map((r, i) => `<th class="num" style="${iProy >= 0 && i >= iProy ? 'color:var(--accent)' : ''}">${fDate(r.fecha)}</th>`).join('')}</tr></thead>
       <tbody>${[['ADMINISTRACIÓN', 'adm'], ['EMPRESA', 'emp'], ['INVERSIÓN', 'inv']].map(([t, k]) =>
         `<tr><td style="left:0;position:sticky;background:var(--surface);font-weight:600">${t}</td>
-        ${rs.map(r => `<td class="num">${nf0.format(Math.round(r[k] || 0))}</td>`).join('')}</tr>`).join('')}
+        ${rs.map(r => `<td class="num"${r.calc ? ` style="border-bottom:2px solid var(--serious)" data-t="${
+          esc('Retirado ' + nf0.format(Math.round(r[k])) + '<br>Calculado ' + nf0.format(Math.round(r.calc[k])))}"` : ''
+        }>${nf0.format(Math.round(r[k] || 0))}</td>`).join('')}</tr>`).join('')}
       </tbody></table></div></div>
-    <p class="hint">Total retirado: ${$$(rs.reduce((a, r) => a + (r.adm || 0) + (r.emp || 0) + (r.inv || 0), 0))}.</p></div>
+    <p class="hint">Cada retiro es la suma de las partes de interés de las cuotas imputadas a ese mes, y se cobra el 20 del mes siguiente.
+      Hasta hoy se muestra lo efectivamente retirado; ${iProy >= 0 ? `desde ${fDate(rs[iProy].fecha)}` : 'hacia adelante'} es proyección de los préstamos ya colocados.
+      ${rs.filter(r => r.calc).length ? `<b>${rs.filter(r => r.calc).length} meses</b> (subrayados) tienen un retiro distinto del calculado — pasá el mouse para ver los dos.` : ''}
+      Total: ${$$(rs.reduce((a, r) => a + r.adm + r.emp + r.inv, 0))}.</p></div>
 
   <div class="sec"><h2>Capital nominal por mes</h2>
     <div class="card"><div class="tw" id="twcap" style="max-height:340px"><table class="tcomp">
@@ -1062,7 +1154,7 @@ function genGerencias(mes, alaNube) {
     { v: p.cuota, s: S.num }, { v: Math.round(p.devol), s: S.num }, { v: D(p.entregado), s: S.fch }]));
 
   /* hoja Retiros: mismo formato que en el libro madre (un mes por columna) */
-  const rs = DB.retiros.filter(r => r.fecha <= d.fin && conRetiro(r));
+  const rs = retiros().filter(r => r.fecha <= d.fin);   // real hasta hoy, proyectado después
   const RET = [
     [{ v: 'RETIROS', s: S.txtB }, ...rs.map(r => ({ v: D(r.fecha), s: S.fchB }))],
     [{ v: 'ADMINISTRACIÓN', s: S.txtB }, ...rs.map(r => ({ v: Math.round(r.adm || 0), s: S.num }))],
@@ -1125,6 +1217,87 @@ function altaPrestamo() {
   DB.prestamos.push(p);
   guardar('Préstamo N° ' + num + ' registrado ✓');
   location.hash = '#/prestamo/' + p.id;
+}
+
+
+/* ---- edición de persona ---- */
+function guardarPersona(id) {
+  const x = persona(+id); if (!x.id) return;
+  const nom = $('#ed-nombre').value.trim();
+  if (!nom) { aviso('El nombre no puede quedar vacío', true); return; }
+  const num = (v) => String(v || '').replace(/\D/g, '') || null;
+  x.nombre = nom;
+  x.cuil = num($('#ed-cuil').value); x.dni = num($('#ed-dni').value); x.telefono = num($('#ed-tel').value);
+  x.empresa = $('#ed-emp').value || null;
+  x.provincia = $('#ed-prov').value.trim() || null;
+  x.status = $('#ed-st').value;
+  guardar('Datos actualizados ✓');
+  ruta();
+}
+
+/* ---- corrección y baja de un préstamo ---- */
+function vEditar(id) {
+  const p = DB.prestamos.find(x => x.id === +id);
+  if (!p) return `<div class="empty">No encontrado</div>`;
+  const x = persona(p.pid);
+  return `<div class="head"><div><h1>Corregir préstamo N° ${esc(p.oc)}</h1>
+    <p>${esc(x.nombre)} · entregado el ${fDate(p.entregado)}</p></div>
+    <a class="btn" href="#/prestamo/${p.id}">← Volver</a></div>
+  <div class="note">Se recalcula todo con la tasa que tenía este préstamo cuando se otorgó
+    (<b>${pct(p.tem)}</b> mensual), no con la vigente hoy. Así una corrección no altera la historia.</div>
+  <div class="two">
+    <div class="card pad">
+      <div class="fg"><label class="fl">N° de orden de crédito</label><input type="text" id="e-oc" value="${esc(p.oc)}"></div>
+      <div class="fg"><label class="fl">Capital</label><input type="number" id="e-cap" value="${p.capital}" step="10000"></div>
+      <div class="fg"><label class="fl">Cantidad de cuotas</label><input type="number" id="e-nc" value="${p.ncuot}" min="1" max="24"></div>
+      <div class="fg"><label class="fl">Fecha de entrega</label><input type="date" id="e-f" value="${p.entregado}"></div>
+      <div class="fg"><label class="fl">Gastos administrativos</label><input type="number" id="e-g" value="${p.gasto || 0}" step="1000"></div>
+      <div class="fg"><label class="fl">Autorizado</label>
+        <select id="e-aut"><option value="1" ${p.autorizado ? 'selected' : ''}>Sí</option><option value="0" ${p.autorizado ? '' : 'selected'}>No</option></select></div>
+      <div class="f" style="margin:0"><button class="btn pri" id="e-go">Guardar cambios</button>
+        <button class="btn" id="e-del" style="color:var(--crit)">Eliminar préstamo</button></div>
+    </div>
+    <div class="card pad" id="e-prev"></div>
+  </div>`;
+}
+function previewEditar(id) {
+  const p = DB.prestamos.find(x => x.id === +id); if (!p) return;
+  const cap = +$('#e-cap').value || 0, n = +$('#e-nc').value || 1, g = +$('#e-g').value || 0;
+  const f = $('#e-f').value || p.entregado;
+  const c = calcular(cap, n, { tem: p.tem, tAdm: p.tem * (p.adm / (p.intCuota || 1)), tInv: p.tem * (p.inv / (p.intCuota || 1)) }, g);
+  $('#e-prev').innerHTML = `<h3 style="margin-bottom:11px">Cómo queda</h3><dl class="dl">
+    <dt>Factor</dt><dd>${c.factor.toFixed(6).replace('.', ',')}</dd>
+    <dt>Devolución</dt><dd>${$$(c.devol)}</dd>
+    <dt>Interés total</dt><dd>${$$(c.interes)}</dd>
+    <dt style="color:var(--ink);font-weight:650">Cuota</dt><dd style="font-size:19px">${$$(c.cuota)}
+      ${c.cuota !== p.cuota ? `<span style="font-size:12px;color:var(--muted);font-weight:400"> antes ${$$(p.cuota)}</span>` : ''}</dd>
+    <dt>Última cuota</dt><dd>${fDate(iso(menos10(eomonth(D(f), n))))}</dd></dl>`;
+}
+function guardarEditar(id) {
+  const p = DB.prestamos.find(x => x.id === +id); if (!p) return;
+  const cap = +$('#e-cap').value || 0, n = +$('#e-nc').value || 0, f = $('#e-f').value, g = +$('#e-g').value || 0;
+  if (cap <= 0 || n <= 0 || !f) { aviso('Revisá capital, cuotas y fecha', true); return; }
+  const rAdm = p.adm / (p.intCuota || 1), rInv = p.inv / (p.intCuota || 1);
+  const c = calcular(cap, n, { tem: p.tem, tAdm: p.tem * rAdm, tInv: p.tem * rInv }, g);
+  Object.assign(p, {
+    oc: $('#e-oc').value.trim() || p.oc, capital: cap, ncuot: n, entregado: f, gasto: g,
+    autorizado: $('#e-aut').value === '1',
+    factor: c.factor, devol: c.devol, cuota: c.cuota, pura: c.pura, interes: c.interes,
+    intCuota: c.intCuota, adm: c.adm, emp: c.emp, inv: c.inv,
+    ultCuota: iso(menos10(eomonth(D(f), n)))
+  });
+  guardar('Préstamo corregido ✓');
+  location.hash = '#/prestamo/' + p.id;
+}
+function borrarPrestamo(id) {
+  const p = DB.prestamos.find(x => x.id === +id); if (!p) return;
+  if (!confirm(`¿Eliminar el préstamo N° ${p.oc} de ${nombreDe(p)}?\n\n` +
+    `Capital ${$$(p.capital)}, ${p.ncuot} cuotas de ${$$(p.cuota)}.\n\n` +
+    'Desaparece de la app y de todos los cierres futuros. Si ya lo mandaste en una liquidación, ' +
+    'esa liquidación no cambia, pero las próximas no lo van a incluir.')) return;
+  DB.prestamos = DB.prestamos.filter(x => x.id !== p.id);
+  guardar('Préstamo eliminado ✓');
+  location.hash = '#/prestamos';
 }
 
 /* ================================================================
@@ -1242,13 +1415,14 @@ function ruta() {
   const h = (location.hash || '#/').slice(2).split('/');
   const p = h[0] || '', arg = h[1];
   const M = $('#main');
-  renderNav(['prestamo', 'nuevo'].includes(p) ? 'prestamos'
+  renderNav(['prestamo', 'nuevo', 'editar'].includes(p) ? 'prestamos'
     : ['persona', 'persona-nueva'].includes(p) ? 'personas' : p === 'doc' ? 'prestamos' : p);
   REDRAW = [];
   if (p === '') { M.innerHTML = vInicio(); pintarChart('#ch-col', W => barChart(CH_COL, { W })); }
   else if (p === 'prestamos') { M.innerHTML = vPrestamos(); pintarLista();
     on('#q', 'input', e => { fPrest.q = e.target.value; pintarLista(); });
     ['estado', 'empresa', 'anio'].forEach(k => { const n = $('#' + k); n.value = fPrest[k]; n.addEventListener('change', e => { fPrest[k] = e.target.value; pintarLista(); }); });
+    on('#copiar', 'click', copiarPrestamos);
   }
   else if (p === 'prestamo') M.innerHTML = vPrestamo(arg);
   else if (p === 'nuevo') { M.innerHTML = vNuevo(); previewNuevo();
@@ -1258,7 +1432,11 @@ function ruta() {
   }
   else if (p === 'personas') { M.innerHTML = vPersonas(); pintarPersonas();
     on('#qp', 'input', e => { qPers = e.target.value; pintarPersonas(); }); }
-  else if (p === 'persona') M.innerHTML = vPersona(arg);
+  else if (p === 'persona') { M.innerHTML = vPersona(arg); on('#ed-go', 'click', () => guardarPersona(arg)); }
+  else if (p === 'editar') { M.innerHTML = vEditar(arg); previewEditar(arg);
+    ['#e-cap', '#e-nc', '#e-f', '#e-g'].forEach(k => { on(k, 'input', () => previewEditar(arg)); on(k, 'change', () => previewEditar(arg)); });
+    on('#e-go', 'click', () => guardarEditar(arg));
+    on('#e-del', 'click', () => borrarPrestamo(arg)); }
   else if (p === 'persona-nueva') { M.innerHTML = vPersonaNueva(); $('#pn').focus();
     on('#pgo', 'click', altaPersona);
     on('#pn', 'keydown', e => { if (e.key === 'Enter') altaPersona(); }); }
@@ -1297,6 +1475,7 @@ function ruta() {
 }
 addEventListener('hashchange', () => { if (DB) ruta(); });
 document.addEventListener('click', e => {
+  if (e.target.closest('input,button,select,label,a')) return;
   const r = e.target.closest('[data-go]');
   if (r) location.hash = r.dataset.go;
 });

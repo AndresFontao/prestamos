@@ -1,6 +1,6 @@
 /* Cachea sólo el "armazón" de la app (código e imágenes) para que abra sin conexión.
    Los datos siempre se piden a OneDrive: nunca se guarda una copia acá. */
-const CACHE = 'prestamos-v1';
+const CACHE = 'prestamos-v2';
 const ARCHIVOS = ['./', './index.html', './app.js', './nube.js', './xlsx.js',
   './logo.jpg', './logo2.jpg', './pagare.jpg', './icon-192.png', './icon-512.png', './manifest.webmanifest'];
 
