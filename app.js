@@ -1,7 +1,7 @@
 /* ================================================================
    Préstamos — gestión de créditos
    ================================================================ */
-const VERSION = '3';
+const VERSION = '5';
 let DB = null;   // se carga desde OneDrive
 const $ = (s, r) => (r || document).querySelector(s);
 const el = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstElementChild; };
@@ -273,24 +273,27 @@ function vInicio() {
     <div class="card pad"><div id="ch-col"></div></div>
   </div>
 
-  <div class="two sec">
-    <div><h2>Requieren atención</h2>
-      ${dup.length ? `<div class="warnbox"><b>${dup.length} persona${dup.length > 1 ? 's' : ''} con más de un descuento en ${mLabel(MES_HOY)}</b><br>
-        ${dup.map(d => esc(d.nombre) + ' — ' + d.cuotas.length + ' cuotas, ' + $$(d.total)).join('<br>')}</div>` : ''}
-      <div class="card"><div class="tw"><table>
-        <thead><tr><th>Termina en ≤3 meses</th><th>Última cuota</th><th class="num">Saldo</th></tr></thead>
-        <tbody>${term.length ? term.slice(0, 8).map(p => `<tr class="click" data-go="#/prestamo/${p.id}">
-          <td>${esc(nombreDe(p))}</td><td>${fDate(p.ultCuota)}</td><td class="num">${$$(saldo(p))}</td></tr>`).join('')
-      : '<tr><td colspan="3" class="empty">Nada por vencer</td></tr>'}</tbody></table></div></div>
-    </div>
-    <div><h2>Últimos préstamos</h2>
-      <div class="card"><div class="tw"><table>
-        <thead><tr><th>N°</th><th>Persona</th><th class="num">Capital</th><th>Entrega</th></tr></thead>
-        <tbody>${ult.map(p => `<tr class="click" data-go="#/prestamo/${p.id}"><td>${esc(p.oc)}</td>
-          <td>${esc(nombreDe(p))}</td><td class="num">${$$(p.capital)}</td><td>${fDate(p.entregado)}</td></tr>`).join('')}
-        </tbody></table></div></div>
-    </div>
-  </div>`;
+  <div class="sec"><h2>Últimos préstamos</h2>
+    <div class="card"><div class="tw"><table>
+      <thead><tr><th>N°</th><th>Persona</th><th>Empresa</th><th class="num">Capital</th>
+        <th class="num">Cuotas</th><th class="num">Cuota</th><th>Entrega</th><th>Últ. cuota</th></tr></thead>
+      <tbody>${ult.map(p => { const x = persona(p.pid);
+        return `<tr class="click" data-go="#/prestamo/${p.id}"><td>${esc(p.oc)}</td>
+        <td>${esc(x.nombre)}</td><td style="color:var(--ink-2)">${esc(x.empresa || '—')}</td>
+        <td class="num">${$$(p.capital)}</td><td class="num">${p.ncuot}</td><td class="num">${$$(p.cuota)}</td>
+        <td>${fDate(p.entregado)}</td><td>${fDate(p.ultCuota)}</td></tr>`; }).join('')}
+      </tbody></table></div></div></div>
+
+  <div class="sec"><h2>Requieren atención</h2>
+    ${dup.length ? `<div class="warnbox"><b>${dup.length} persona${dup.length > 1 ? 's' : ''} con más de un descuento en ${mLabel(MES_HOY)}</b><br>
+      ${dup.map(d => esc(d.nombre) + ' — ' + d.cuotas.length + ' cuotas, ' + $$(d.total)).join('<br>')}</div>` : ''}
+    <div class="card"><div class="tw"><table>
+      <thead><tr><th>Termina en ≤3 meses</th><th>Empresa</th><th>Última cuota</th><th class="num">Cuotas restantes</th><th class="num">Saldo</th></tr></thead>
+      <tbody>${term.length ? term.slice(0, 10).map(p => { const x = persona(p.pid);
+        return `<tr class="click" data-go="#/prestamo/${p.id}"><td>${esc(x.nombre)}</td>
+        <td style="color:var(--ink-2)">${esc(x.empresa || '—')}</td><td>${fDate(p.ultCuota)}</td>
+        <td class="num">${p.ncuot - cuotasPagadas(p)}</td><td class="num">${$$(saldo(p))}</td></tr>`; }).join('')
+      : '<tr><td colspan="5" class="empty">Nada por vencer</td></tr>'}</tbody></table></div></div></div>`;
 }
 
 /* ------------------------- préstamos ------------------------- */
@@ -472,21 +475,24 @@ function comboPersona(id, onPick) {
   lista.addEventListener('mousedown', e => { const d = e.target.closest('[data-i]'); if (d) { e.preventDefault(); elegir(+d.dataset.i); } });
   document.addEventListener('mousedown', e => { if (!cont.contains(e.target)) cerrar(); });
 }
-const htmlCombo = (id, ph) => `<div class="cbox" id="${id}">
-  <input type="text" id="${id}-q" placeholder="${ph}" autocomplete="off">
-  <input type="hidden" id="${id}-v">
+const htmlCombo = (id, ph, val, txt) => `<div class="cbox" id="${id}">
+  <input type="text" id="${id}-q" placeholder="${ph}" autocomplete="off" value="${esc(txt || '')}">
+  <input type="hidden" id="${id}-v" value="${val || ''}">
   <div class="list" id="${id}-l" style="display:none"></div></div>`;
 
 /* ------------------------- alta ------------------------- */
-function vNuevo() {
+function vNuevo(pid) {
   const t = tasaVigente(iso(HOY));
+  const x = pid ? persona(+pid) : null;
   return `
-  <div class="head"><div><h1>Nuevo préstamo</h1><p>Tasa vigente ${pct(t.tem)} mensual · desde ${fDate(t.desde)}</p></div></div>
+  <div class="head"><div><h1>Nuevo préstamo</h1>
+    <p>Tasa vigente ${pct(t.tem)} mensual · desde ${fDate(t.desde)}</p></div>
+    ${x && x.id ? `<a class="btn" href="#/persona/${x.id}">← Volver a la ficha</a>` : ''}</div>
 
   <div class="two">
     <div class="card pad">
       <div class="fg"><label class="fl">Persona</label>
-        ${htmlCombo('np', 'Buscar por nombre, CUIL o DNI…')}
+        ${htmlCombo('np', 'Buscar por nombre, CUIL o DNI…', x && x.id ? x.id : '', x && x.id ? x.nombre : '')}
         <div class="hint" id="npi">Escribí para buscar entre las ${DB.personas.length} personas del maestro.</div></div>
       <div class="fg"><label class="fl">Capital</label><input type="number" id="ncap" value="500000" step="10000" min="1000"></div>
       <div class="fg"><label class="fl">Cantidad de cuotas</label><input type="number" id="nc" value="6" min="1" max="24"></div>
@@ -598,7 +604,8 @@ function vPersona(id) {
   const cap = ps.reduce((a, p) => a + p.capital, 0);
   const act = ps.filter(p => activo(p));
   return `<div class="head"><div><h1>${esc(x.nombre)}</h1>
-    <p>${esc(x.empresa || 'sin empresa')} · ${ps.length} préstamos · ${$$(cap)} prestado en total</p></div></div>
+    <p>${esc(x.empresa || 'sin empresa')} · ${ps.length} préstamos · ${$$(cap)} prestado en total</p></div>
+    <a class="btn pri" href="#/nuevo/${x.id}"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>Nuevo préstamo</a></div>
   <div class="two">
     <div class="card pad"><h3 style="margin-bottom:11px">Datos</h3>
       <div class="fg"><label class="fl">Apellido y nombre</label><input type="text" id="ed-nombre" value="${esc(x.nombre)}"></div>
@@ -1436,9 +1443,10 @@ function ruta() {
     on('#copiar', 'click', copiarPrestamos);
   }
   else if (p === 'prestamo') M.innerHTML = vPrestamo(arg);
-  else if (p === 'nuevo') { M.innerHTML = vNuevo(); previewNuevo();
+  else if (p === 'nuevo') { M.innerHTML = vNuevo(arg); previewNuevo();
     ['#ncap', '#nc', '#nf', '#ng'].forEach(s => { on(s, 'input', previewNuevo); on(s, 'change', previewNuevo); });
     comboPersona('np', previewNuevo);
+    if (arg) $('#ncap').select(); else $('#np-q').focus();
     on('#nsave', 'click', altaPrestamo);
   }
   else if (p === 'personas') { M.innerHTML = vPersonas(); pintarPersonas();
