@@ -1,4 +1,4 @@
-# Préstamos — puesta en marcha
+# Préstamos — puesta en marcha 
 
 Son tres pasos, una sola vez. Después la app se abre como cualquier otra, en la
 computadora y en el celular.
