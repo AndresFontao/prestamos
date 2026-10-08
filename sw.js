@@ -1,7 +1,7 @@
 /* Cachea sólo el "armazón" de la app (código e imágenes) para que abra sin conexión.
    Los datos siempre se piden a OneDrive: nunca se guarda una copia acá. */
-const CACHE = 'prestamos-v5';
-const ARCHIVOS = ['./', './index.html', './app.js?v=5', './nube.js?v=5', './xlsx.js?v=5',
+const CACHE = 'prestamos-v6';
+const ARCHIVOS = ['./', './index.html', './app.js?v=6', './nube.js?v=6', './xlsx.js?v=6',
   './logo.jpg', './logo2.jpg', './pagare.jpg', './icon-192.png', './icon-512.png', './manifest.webmanifest'];
 
 self.addEventListener('install', e => {

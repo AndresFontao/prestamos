@@ -1,7 +1,7 @@
 /* ================================================================
    Préstamos — gestión de créditos
    ================================================================ */
-const VERSION = '5';
+const VERSION = '6';
 let DB = null;   // se carga desde OneDrive
 const $ = (s, r) => (r || document).querySelector(s);
 const el = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstElementChild; };
@@ -243,6 +243,10 @@ function renderNav(cur) {
    PANTALLAS
    ================================================================ */
 
+function pillEstado(x) {
+  return x.status === 'BAJA' ? '<span class="pill dot baja">BAJA</span>' : '<span class="pill dot act">Activo</span>';
+}
+
 function vInicio() {
   const act = DB.prestamos.filter(p => activo(p));
   const cartera = act.reduce((a, p) => a + saldo(p), 0);
@@ -258,6 +262,7 @@ function vInicio() {
 
   const dup = duplicados(MES_HOY);
   const term = porTerminar(3);
+  const bajaAct = act.filter(p => persona(p.pid).status === 'BAJA');
   const ult = [...DB.prestamos].slice(-8).reverse();
 
   return `
@@ -287,6 +292,14 @@ function vInicio() {
   <div class="sec"><h2>Requieren atención</h2>
     ${dup.length ? `<div class="warnbox"><b>${dup.length} persona${dup.length > 1 ? 's' : ''} con más de un descuento en ${mLabel(MES_HOY)}</b><br>
       ${dup.map(d => esc(d.nombre) + ' — ' + d.cuotas.length + ' cuotas, ' + $$(d.total)).join('<br>')}</div>` : ''}
+    ${bajaAct.length ? `<div class="card" style="margin-bottom:14px;border-color:color-mix(in srgb,var(--crit) 45%,transparent)"><div class="tw"><table>
+      <thead><tr><th>De BAJA con préstamo activo</th><th>Empresa</th><th>N°</th><th>Última cuota</th><th class="num">Cuotas restantes</th><th class="num">Saldo</th></tr></thead>
+      <tbody>${bajaAct.map(p => { const x = persona(p.pid);
+        return `<tr class="click" data-go="#/prestamo/${p.id}"><td>${esc(x.nombre)} <span class="pill dot baja">BAJA</span></td>
+        <td style="color:var(--ink-2)">${esc(x.empresa || '—')}</td><td>${esc(p.oc)}</td><td>${fDate(p.ultCuota)}</td>
+        <td class="num">${p.ncuot - cuotasPagadas(p)}</td><td class="num">${$$(saldo(p))}</td></tr>`; }).join('')}
+      <tr><td colspan="5"><b>Total en riesgo</b></td><td class="num"><b>${$$(bajaAct.reduce((a, p) => a + saldo(p), 0))}</b></td></tr>
+      </tbody></table></div></div>` : ''}
     <div class="card"><div class="tw"><table>
       <thead><tr><th>Termina en ≤3 meses</th><th>Empresa</th><th>Última cuota</th><th class="num">Cuotas restantes</th><th class="num">Saldo</th></tr></thead>
       <tbody>${term.length ? term.slice(0, 10).map(p => { const x = persona(p.pid);
@@ -751,16 +764,16 @@ function vAnalisis() {
 
   <div class="sec"><h2>Clientes que están terminando de pagar</h2>
     <div class="card"><div class="tw"><table>
-      <thead><tr><th>Persona</th><th>Empresa</th><th>N°</th><th class="num">Cuotas restantes</th>
+      <thead><tr><th>Persona</th><th>Empresa</th><th>Estado</th><th>N°</th><th class="num">Cuotas restantes</th>
         <th class="num">Saldo</th><th>Última cuota</th><th></th></tr></thead>
       <tbody>${porTerminar(4).map(p => { const x = persona(p.pid), w = waNumero(x.telefono);
         return `<tr><td class="click" data-go="#/prestamo/${p.id}">${esc(x.nombre)}</td>
-        <td style="color:var(--ink-2)">${esc(x.empresa || '—')}</td><td>${esc(p.oc)}</td>
+        <td style="color:var(--ink-2)">${esc(x.empresa || '—')}</td><td>${pillEstado(x)}</td><td>${esc(p.oc)}</td>
         <td class="num">${p.ncuot - cuotasPagadas(p)}</td><td class="num">${$$(saldo(p))}</td><td>${fDate(p.ultCuota)}</td>
         <td>${w ? `<a class="btn" style="padding:5px 11px;font-size:12.5px" target="_blank" rel="noopener"
             href="https://wa.me/${w}?text=${encodeURIComponent(TXT_PROPUESTA)}">Enviar propuesta</a>`
           : `<span class="hint" style="margin:0">sin teléfono</span>`}</td></tr>`; }).join('')
-      || '<tr><td colspan="7" class="empty">Sin préstamos por terminar en 4 meses</td></tr>'}</tbody></table></div></div>
+      || '<tr><td colspan="8" class="empty">Sin préstamos por terminar en 4 meses</td></tr>'}</tbody></table></div></div>
     <p class="hint">Candidatos naturales para ofrecer una renovación.</p></div>`;
 }
 function pintarDup() {
